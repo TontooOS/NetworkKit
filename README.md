@@ -15,24 +15,6 @@ Add to your `Cargo.toml`:
 sdk = { path = "/Library/System/sdk", features = ["NetworkKit"] }
 ```
 
-Then at the crate root:
-
-```rust
-sdk::preinclude!();
-use NetworkKit::{ /* ... */ };
-```
-
-## Documentation
-
-See the wiki: [wiki/MAIN.md](wiki/MAIN.md)
-
-## Permissions
-
-NetworkKit uses the regular Linux stack (`bluetoothctl`, `nmcli`, `ip`,
-plain sockets) and contains no permission logic itself. Access control is
-enforced by the FishPerms system service at the OS level; denied operations
-surface as `NetworkError::PermissionDenied`.
-
 ## License
 
 TCL v26.1
