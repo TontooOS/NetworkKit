@@ -1,0 +1,8 @@
+{
+  "not_available": "Netzwerkhardware oder Werkzeug nicht verfügbar",
+  "permission_denied": "Zugriff verweigert",
+  "timeout": "Vorgang hat das Zeitlimit überschritten",
+  "command_failed": "Befehl fehlgeschlagen: {}",
+  "parse_error": "Fehler beim Auswerten: {}",
+  "io_error": "E/A-Fehler: {}"
+}

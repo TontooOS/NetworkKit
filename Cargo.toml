@@ -1,0 +1,32 @@
+[package]
+name = "networkkit"
+version = "26.1.0"
+edition = "2021"
+license = "TCL"
+description = "Network framework for TontooOS - Bluetooth, WiFi and local network discovery via Linux"
+authors = ["arlomu"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "networkkit"
+path = "src/lib.rs"
+
+[[example]]
+name = "test_bluetooth"
+path = "examples/test_bluetooth.rs"
+
+[[example]]
+name = "test_wifi"
+path = "examples/test_wifi.rs"
+
+[[example]]
+name = "test_local_network"
+path = "examples/test_local_network.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

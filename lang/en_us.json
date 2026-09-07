@@ -1,0 +1,8 @@
+{
+  "not_available": "Network hardware or tool not available",
+  "permission_denied": "Permission denied",
+  "timeout": "Operation timed out",
+  "command_failed": "Command failed: {}",
+  "parse_error": "Parse error: {}",
+  "io_error": "I/O error: {}"
+}
