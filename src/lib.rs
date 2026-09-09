@@ -1,4 +1,5 @@
 pub mod bluetooth;
+pub mod daemon;
 pub mod lang;
 pub mod localnet;
 pub mod types;

@@ -52,6 +52,7 @@ pub unsafe extern "C" fn tontoo_networkkit_scan_wifi(
                         "signal_pct": n.signal_pct,
                         "frequency_mhz": n.frequency_mhz,
                         "security": n.security,
+                        "known": n.known,
                     })
                 })
                 .collect(),

@@ -1,15 +1,20 @@
 use crate::types::{NetworkError, Result};
 use crate::util::{rfkill_blocked, run, tool_available};
+use serde::{Deserialize, Serialize};
 
 pub const NMCLI: &str = "nmcli";
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WifiNetwork {
     pub ssid: String,
     pub bssid: Option<String>,
     pub signal_pct: i32,
     pub frequency_mhz: Option<u32>,
     pub security: String,
+    /// True when the SSID is stored as a known network (set by the
+    /// settings daemon; always false for direct local scans).
+    #[serde(default)]
+    pub known: bool,
 }
 
 impl WifiNetwork {
@@ -18,7 +23,7 @@ impl WifiNetwork {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WifiStatus {
     pub interface: String,
     pub ssid: Option<String>,
@@ -112,6 +117,7 @@ pub fn parse_network_line(line: &str) -> Option<WifiNetwork> {
         signal_pct: signal_pct.clamp(0, 100),
         frequency_mhz,
         security,
+        known: false,
     })
 }
 
@@ -179,9 +185,29 @@ impl Wifi {
             })
     }
 
-    /// Scans for visible networks. With `rescan = true` an active scan is
-    /// triggered before listing.
+    /// Scans for visible networks. Queries the settings daemon first
+    /// (which marks known networks); falls back to a direct local scan
+    /// when the daemon is unreachable.
     pub fn scan(&self, rescan: bool) -> Result<Vec<WifiNetwork>> {
+        if let Ok(networks) = self.scan_via_daemon() {
+            return Ok(networks);
+        }
+        self.scan_direct(rescan)
+    }
+
+    fn scan_via_daemon(&self) -> Result<Vec<WifiNetwork>> {
+        let result = crate::daemon::call("wifi_list", serde_json::json!({}))?;
+        let networks: Vec<WifiNetwork> = serde_json::from_value(
+            result.get("networks").cloned().unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+        Ok(networks)
+    }
+
+    /// Direct local scan via nmcli. Used as a fallback when the settings
+    /// daemon is unreachable. With `rescan = true` an active scan is
+    /// triggered before listing.
+    pub fn scan_direct(&self, rescan: bool) -> Result<Vec<WifiNetwork>> {
         if !self.is_available() {
             return Err(NetworkError::NotAvailable);
         }
@@ -205,8 +231,28 @@ impl Wifi {
         Ok(parse_network_list(&text))
     }
 
-    /// Details about the currently connected network, if any.
+    /// Details about the currently connected network, if any. Queries
+    /// the settings daemon first; falls back to a direct local read
+    /// when the daemon is unreachable.
     pub fn status(&self) -> Result<Option<WifiStatus>> {
+        if let Ok(status) = self.status_via_daemon() {
+            return Ok(status);
+        }
+        self.status_direct()
+    }
+
+    fn status_via_daemon(&self) -> Result<Option<WifiStatus>> {
+        let result = crate::daemon::call("wifi_status", serde_json::json!({}))?;
+        let status: Option<WifiStatus> = serde_json::from_value(
+            result.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+        Ok(status)
+    }
+
+    /// Direct local status read via nmcli. Used as a fallback when the
+    /// settings daemon is unreachable.
+    pub fn status_direct(&self) -> Result<Option<WifiStatus>> {
         if !self.is_available() {
             return Err(NetworkError::NotAvailable);
         }
@@ -279,72 +325,11 @@ impl Wifi {
         Ok(Some(status))
     }
 
-    /// Connects to a network. Blocks until NetworkManager reports completion.
-    /// For open networks pass `None` as password.
-    pub fn connect(&self, ssid: &str, password: Option<&str>, hidden: bool) -> Result<WifiStatus> {
-        if !self.is_available() {
-            return Err(NetworkError::NotAvailable);
-        }
-
-        let mut args: Vec<String> = vec![
-            "--terse".into(),
-            "device".into(),
-            "wifi".into(),
-            "connect".into(),
-            ssid.into(),
-        ];
-        if let Some(password) = password {
-            args.push("password".into());
-            args.push(password.into());
-        }
-        if hidden {
-            args.push("hidden".into());
-            args.push("yes".into());
-        }
-
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        run(NMCLI, &refs)?;
-
-        let status = self.status()?;
-        match status {
-            Some(s) if s.ssid.as_deref() == Some(ssid) => Ok(s),
-            _ => Err(NetworkError::CommandFailed(format!(
-                "could not associate with {}",
-                ssid
-            ))),
-        }
-    }
-
-    /// Disconnects the wireless interface.
-    pub fn disconnect(&self) -> Result<()> {
-        if !self.is_available() {
-            return Err(NetworkError::NotAvailable);
-        }
-
-        let iface = self.interface().ok_or(NetworkError::NotAvailable)?;
-        run(NMCLI, &["device", "disconnect", &iface])?;
-        Ok(())
-    }
-
-    // ---- async wrappers ----
+    // ---- async wrappers (read-only; daemon-first like the sync calls) ----
 
     pub async fn scan_async(&self, rescan: bool) -> Result<Vec<WifiNetwork>> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.scan(rescan))
-            .await
-            .map_err(|e| NetworkError::IoError(e.to_string()))?
-    }
-
-    pub async fn connect_async(
-        &self,
-        ssid: &str,
-        password: Option<&str>,
-        hidden: bool,
-    ) -> Result<WifiStatus> {
-        let this = self.clone();
-        let ssid = ssid.to_string();
-        let password = password.map(str::to_string);
-        tokio::task::spawn_blocking(move || this.connect(&ssid, password.as_deref(), hidden))
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }

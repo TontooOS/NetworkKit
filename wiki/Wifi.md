@@ -1,8 +1,11 @@
 # WiFi
 
-The `Wifi` client drives wireless hardware through NetworkManager (`nmcli`).
-It scans for access points, reports the current connection with signal
-strength and IP address and connects or disconnects networks.
+The `Wifi` client is read-only. It reports nearby access points and the
+current connection. The settings daemon owns WiFi control: `scan` and
+`status` query the daemon first (which marks known networks) and fall back
+to direct local reads when the daemon is unreachable. Connect, disconnect,
+enable, disable and forget exist only in the daemon protocol and have no
+client here; only the Settings app may use them.
 
 ## Availability
 
@@ -30,8 +33,9 @@ pub fn radio_blocked(&self) -> Option<bool>
 pub fn scan(&self, rescan: bool) -> Result<Vec<WifiNetwork>>
 ```
 
-Runs `nmcli --terse --escape yes -f SSID,BSSID,SIGNAL,FREQ,SECURITY device wifi list`
-and triggers an active rescan when requested.
+Queries the daemon op `wifi_list` first; on any daemon error falls back to
+a direct local scan (`scan_direct`). The daemon result flags stored known
+networks (`known: true`); direct scans always report `known: false`.
 
 ```rust
 pub struct WifiNetwork {
@@ -40,10 +44,11 @@ pub struct WifiNetwork {
     pub signal_pct: i32,
     pub frequency_mhz: Option<u32>,
     pub security: String,
+    pub known: bool,
 }
 ```
 
-Behavior:
+Direct scan behavior (`scan_direct`):
 
 - Terse lines are split escape-aware; literal colons arrive as `\:`.
 - Networks are deduplicated per SSID + BSSID, keeping the strongest signal.
@@ -60,7 +65,9 @@ Returns `Err(NetworkError::CommandFailed)` when `nmcli` exits non-zero.
 pub fn status(&self) -> Result<Option<WifiStatus>>
 ```
 
-Collects details about the active connection:
+Queries the daemon op `wifi_status` first; on any daemon error falls back
+to a direct local read (`status_direct`). Collects details about the active
+connection:
 
 ```rust
 pub struct WifiStatus {
@@ -82,24 +89,12 @@ pub struct WifiStatus {
 - `state` is read from `nmcli --terse -f STATE device status` and falls back
   to `"unknown"`.
 
-## connect
+## Write operations (daemon-only)
 
-```rust
-pub fn connect(&self, ssid: &str, password: Option<&str>, hidden: bool) -> Result<WifiStatus>
-```
-
-Blocks until NetworkManager finishes the association. Pass `None` as password
-for open networks; `hidden = true` adds the `hidden yes` flags. The returned
-status is verified against the requested SSID; on mismatch the method returns
-`Err(NetworkError::CommandFailed)`.
-
-## disconnect
-
-```rust
-pub fn disconnect(&self) -> Result<()>
-```
-
-Runs `nmcli device disconnect <interface>`.
+`connect`, `disconnect` and `connect_async` were removed from the public
+API. The daemon implements `wifi_connect`, `wifi_disconnect`, `wifi_enable`,
+`wifi_disable` and `wifi_forget` in its socket protocol without a public
+client; only the Settings app (`com.tontoo.systemsettings`) calls them.
 
 ## Async API
 
@@ -108,13 +103,20 @@ Blocking calls run inside `tokio::task::spawn_blocking`:
 ```rust
 pub async fn scan_async(&self, rescan: bool) -> Result<Vec<WifiNetwork>>
 pub async fn status_async(&self) -> Result<Option<WifiStatus>>
-pub async fn connect_async(
-    &self,
-    ssid: &str,
-    password: Option<&str>,
-    hidden: bool,
-) -> Result<WifiStatus>
 ```
+
+## Daemon client
+
+```rust
+pub fn socket_path() -> PathBuf
+pub fn daemon_available() -> bool
+pub fn call(op: &str, params: Value) -> Result<Value>
+```
+
+- `socket_path` honors `SETTINGS_SOCKET`, else `/run/tontoo-settings.sock`.
+- `call` sends one newline-delimited JSON frame and returns the `result`
+  of a success frame. Missing socket maps to `NotAvailable`, a daemon
+  error frame to `CommandFailed`, malformed frames to `ParseError`.
 
 ## Usage / Example
 
