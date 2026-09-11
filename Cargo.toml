@@ -7,7 +7,7 @@ description = "Network framework for TontooOS - Bluetooth, WiFi and local networ
 authors = ["arlomu"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["dylib"]
 name = "networkkit"
 path = "src/lib.rs"
 
