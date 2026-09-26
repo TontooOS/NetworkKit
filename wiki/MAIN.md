@@ -17,12 +17,13 @@ iproute2, raw UDP/mDNS sockets) without any cloud dependency.
 | Bluetooth | [Bluetooth.md](Bluetooth.md) | `Bluetooth` client, adapters, discovery, pairing, connections |
 | WiFi | [Wifi.md](Wifi.md) | Read-only `Wifi` client (daemon-first scan/status, known flag) |
 | Local Network | [LocalNetwork.md](LocalNetwork.md) | Interfaces, neighbor table, UDP broadcast, mDNS and TCP sweeps |
+| HTTP | [Http.md](Http.md) | Blocking HTTP/HTTPS client (`HttpClient`, `HttpRequest`, discovery bridge) |
 | Localization | [Localization.md](Localization.md) | Error message localization via `lang/en_us.json` and `lang/de_de.json` |
 
 ## Quick Start
 
 ```rust
-use networkkit::{scan_wifi, discover_bluetooth, local_interfaces};
+use networkkit::{scan_wifi, discover_bluetooth, local_interfaces, http_get};
 
 let networks = scan_wifi().unwrap();
 for net in &networks {
@@ -35,10 +36,13 @@ println!("{} bluetooth devices found", devices.len());
 for iface in local_interfaces().unwrap() {
     println!("{} up={}", iface.name, iface.up);
 }
+
+let resp = http_get("https://example.com").unwrap();
+println!("HTTP {}", resp.status);
 ```
 
-See [Wifi.md](Wifi.md), [Bluetooth.md](Bluetooth.md) and
-[LocalNetwork.md](LocalNetwork.md) for details.
+See [Wifi.md](Wifi.md), [Bluetooth.md](Bluetooth.md),
+[LocalNetwork.md](LocalNetwork.md) and [Http.md](Http.md) for details.
 
 ## Permissions
 
@@ -50,6 +54,10 @@ contains no permission code; denied operations surface as
 
 ## Changelog
 
+- 2026-09-26: Added blocking HTTP/HTTPS client (`http` module with
+  `HttpClient`, `HttpRequest`, `HttpResponse`, mDNS discovery bridge and C
+  FFI `tontoo_networkkit_http_get`/`_post`). New `NetworkError::InvalidUrl`
+  and `NetworkError::HttpError` with `invalid_url`/`http_error` lang keys.
 - 2026-09-09: WiFi is read-only and daemon-first. `scan`/`status` query
   the settings daemon (`wifi_list`/`wifi_status`, `known` flag on
   networks) with a direct nmcli fallback; `connect`, `disconnect` and

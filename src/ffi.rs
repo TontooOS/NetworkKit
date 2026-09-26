@@ -221,6 +221,78 @@ fn device_json(device: &crate::bluetooth::Device) -> Value {
     })
 }
 
+fn http_response_json(resp: &crate::http::HttpResponse) -> Value {
+    json!({
+        "status": resp.status,
+        "headers": resp.headers.iter().map(|(k, v)| json!({"name": k, "value": v})).collect::<Vec<_>>(),
+        "body": String::from_utf8_lossy(&resp.body).to_string(),
+        "url": resp.url,
+    })
+}
+
+fn c_str(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_owned()) }
+}
+
+/// Blocking HTTP GET. Returns a JSON object `{status, headers, body, url}`.
+///
+/// # Safety
+///
+/// `url` must be a valid NUL-terminated string. `error_out`, when not null,
+/// must point to a writable `char*`.
+#[no_mangle]
+pub unsafe extern "C" fn tontoo_networkkit_http_get(
+    url: *const c_char,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    let Some(url) = c_str(url) else {
+        set_error(error_out, "invalid url pointer");
+        return std::ptr::null_mut();
+    };
+    match crate::http_get(&url) {
+        Ok(resp) => json_ptr(&http_response_json(&resp)),
+        Err(e) => {
+            set_error(error_out, &e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Blocking HTTP POST with a raw body.
+///
+/// # Safety
+///
+/// `url` must be a valid NUL-terminated string. `body`/`body_len` describe
+/// the request body (may be null/0 for empty). `error_out` rules match
+/// `tontoo_networkkit_http_get`.
+#[no_mangle]
+pub unsafe extern "C" fn tontoo_networkkit_http_post(
+    url: *const c_char,
+    body: *const u8,
+    body_len: usize,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    let Some(url) = c_str(url) else {
+        set_error(error_out, "invalid url pointer");
+        return std::ptr::null_mut();
+    };
+    let bytes: &[u8] = if body.is_null() || body_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(body, body_len) }
+    };
+    match crate::http_post(&url, bytes) {
+        Ok(resp) => json_ptr(&http_response_json(&resp)),
+        Err(e) => {
+            set_error(error_out, &e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Free a string returned by this library.
 ///
 /// # Safety

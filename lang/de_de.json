@@ -4,5 +4,7 @@
   "timeout": "Vorgang hat das Zeitlimit überschritten",
   "command_failed": "Befehl fehlgeschlagen: {}",
   "parse_error": "Fehler beim Auswerten: {}",
-  "io_error": "E/A-Fehler: {}"
+  "io_error": "E/A-Fehler: {}",
+  "invalid_url": "Ungültige URL: {}",
+  "http_error": "HTTP-Fehler: {}"
 }

@@ -14,6 +14,8 @@ same scheme as CoreLocation. The files live in `lang/en_us.json` and
 | `command_failed` | `NetworkError::CommandFailed` | Command failed: {} |
 | `parse_error` | `NetworkError::ParseError` | Parse error: {} |
 | `io_error` | `NetworkError::IoError` | I/O error: {} |
+| `invalid_url` | `NetworkError::InvalidUrl` | Invalid URL: {} |
+| `http_error` | `NetworkError::HttpError` | HTTP error: {} |
 
 ## Locale Detection
 
@@ -55,3 +57,4 @@ assert_eq!(lang::t("permission_denied"), "Permission denied");
 ## Cross References
 
 - [MAIN.md](MAIN.md) – feature index
+- [Http.md](Http.md) – `invalid_url` and `http_error` keys used by the HTTP client

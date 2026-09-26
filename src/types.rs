@@ -10,6 +10,8 @@ pub enum NetworkError {
     CommandFailed(String),
     ParseError(String),
     IoError(String),
+    InvalidUrl(String),
+    HttpError(String),
 }
 
 impl NetworkError {
@@ -31,6 +33,8 @@ impl fmt::Display for NetworkError {
             NetworkError::CommandFailed(c) => write!(f, "{}", lang::t_fmt("command_failed", c)),
             NetworkError::ParseError(e) => write!(f, "{}", lang::t_fmt("parse_error", e)),
             NetworkError::IoError(e) => write!(f, "{}", lang::t_fmt("io_error", e)),
+            NetworkError::InvalidUrl(u) => write!(f, "{}", lang::t_fmt("invalid_url", u)),
+            NetworkError::HttpError(e) => write!(f, "{}", lang::t_fmt("http_error", e)),
         }
     }
 }
@@ -40,6 +44,28 @@ impl std::error::Error for NetworkError {}
 impl From<io::Error> for NetworkError {
     fn from(err: io::Error) -> Self {
         NetworkError::from_io(err)
+    }
+}
+
+impl From<ureq::Error> for NetworkError {
+    fn from(err: ureq::Error) -> Self {
+        match err {
+            ureq::Error::Timeout(_) => NetworkError::Timeout,
+            ureq::Error::BadUri(msg) => NetworkError::InvalidUrl(msg),
+            ureq::Error::StatusCode(code) => {
+                NetworkError::HttpError(format!("unexpected status {}", code))
+            }
+            other => {
+                let msg = other.to_string();
+                if msg.to_lowercase().contains("timed out")
+                    || msg.to_lowercase().contains("timeout")
+                {
+                    NetworkError::Timeout
+                } else {
+                    NetworkError::HttpError(msg)
+                }
+            }
+        }
     }
 }
 

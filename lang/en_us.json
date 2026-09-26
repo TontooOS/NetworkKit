@@ -4,5 +4,7 @@
   "timeout": "Operation timed out",
   "command_failed": "Command failed: {}",
   "parse_error": "Parse error: {}",
-  "io_error": "I/O error: {}"
+  "io_error": "I/O error: {}",
+  "invalid_url": "Invalid URL: {}",
+  "http_error": "HTTP error: {}"
 }

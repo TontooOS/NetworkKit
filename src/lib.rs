@@ -1,5 +1,6 @@
 pub mod bluetooth;
 pub mod daemon;
+pub mod http;
 pub mod lang;
 pub mod localnet;
 pub mod types;
@@ -7,6 +8,7 @@ pub mod util;
 pub mod wifi;
 
 pub use bluetooth::{Adapter, Bluetooth, Device, DeviceFilter};
+pub use http::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 pub use localnet::{
     Address, DiscoveryReply, DiscoveredHost, DiscoverySource, Interface, LocalNetwork, Neighbor,
 };
@@ -25,6 +27,16 @@ impl NetworkKit {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+/// Performs a blocking HTTP GET and returns the response.
+pub fn http_get(url: &str) -> Result<HttpResponse> {
+    http::get(url)
+}
+
+/// Performs a blocking HTTP POST with raw bytes.
+pub fn http_post(url: &str, body: &[u8]) -> Result<HttpResponse> {
+    http::post(url, body)
 }
 
 /// Scans nearby WiFi networks (active rescan).

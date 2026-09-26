@@ -12,6 +12,8 @@ struct Messages {
     command_failed: String,
     parse_error: String,
     io_error: String,
+    invalid_url: String,
+    http_error: String,
 }
 
 impl Messages {
@@ -23,6 +25,8 @@ impl Messages {
             "command_failed" => Some(&self.command_failed),
             "parse_error" => Some(&self.parse_error),
             "io_error" => Some(&self.io_error),
+            "invalid_url" => Some(&self.invalid_url),
+            "http_error" => Some(&self.http_error),
             _ => None,
         }
     }
