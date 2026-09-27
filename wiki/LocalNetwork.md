@@ -132,7 +132,7 @@ Single TCP probe against one host.
 
 ## Async API
 
-Blocking calls run inside `tokio::task::spawn_blocking`:
+Blocking calls run inside `foundation::async_runtime::spawn_blocking`:
 
 ```rust
 pub async fn interfaces_async(&self) -> Result<Vec<Interface>>

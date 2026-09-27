@@ -98,7 +98,7 @@ client; only the Settings app (`com.tontoo.systemsettings`) calls them.
 
 ## Async API
 
-Blocking calls run inside `tokio::task::spawn_blocking`:
+Blocking calls run inside `foundation::async_runtime::spawn_blocking`:
 
 ```rust
 pub async fn scan_async(&self, rescan: bool) -> Result<Vec<WifiNetwork>>

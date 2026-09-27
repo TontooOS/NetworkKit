@@ -2,9 +2,10 @@
 //!
 //! Sync-first API on top of `ureq` with `rustls` (no OpenSSL dependency).
 //! All calls are blocking, matching the rest of NetworkKit. Async wrappers
-//! run the same blocking code on `tokio::task::spawn_blocking`, so apps can
-//! unify the previous `ureq` (sync) and `reqwest`+`tokio` (async) stacks on
-//! this single module.
+//! run the same blocking code on `foundation::async_runtime::spawn_blocking`,
+//! so apps can unify the previous `ureq` (sync) and `reqwest`+`tokio`
+//! (async) stacks on this single module. JSON goes through Foundation
+//! (`JsonValue`); there is no serde dependency.
 //!
 //! Quick start:
 //!
@@ -109,14 +110,10 @@ impl HttpResponse {
     }
 
     /// Body decoded as UTF-8. Returns `ParseError` on invalid UTF-8.
+    ///
+    /// For JSON, parse the text with Foundation's `JsonValue::parse`.
     pub fn text(&self) -> Result<String> {
         String::from_utf8(self.body.clone())
-            .map_err(|e| NetworkError::ParseError(e.to_string()))
-    }
-
-    /// Body parsed as JSON into `T`.
-    pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_slice(&self.body)
             .map_err(|e| NetworkError::ParseError(e.to_string()))
     }
 }
@@ -182,9 +179,10 @@ impl HttpRequest {
         self
     }
 
-    pub fn json_body<T: serde::Serialize>(mut self, value: &T) -> Result<Self> {
-        let bytes =
-            serde_json::to_vec(value).map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    /// JSON body from pre-rendered text (e.g. via Foundation's `JsonObject`
+    /// or `JsonValue::stringify`). Sets `Content-Type: application/json`
+    /// unless already present.
+    pub fn json_body_str(mut self, json: &str) -> Self {
         if !self
             .headers
             .iter()
@@ -195,8 +193,8 @@ impl HttpRequest {
                 "application/json; charset=utf-8".to_string(),
             ));
         }
-        self.body = Some(bytes);
-        Ok(self)
+        self.body = Some(json.as_bytes().to_vec());
+        self
     }
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
@@ -230,7 +228,7 @@ impl HttpRequest {
     /// Must be called inside a Tokio runtime.
     pub async fn send_async(&self) -> Result<HttpResponse> {
         let req = self.clone();
-        tokio::task::spawn_blocking(move || req.send())
+        foundation::async_runtime::spawn_blocking(move || req.send())
             .await
             .map_err(|e| NetworkError::HttpError(e.to_string()))?
     }
@@ -313,9 +311,11 @@ impl HttpClient {
         body: Option<Vec<u8>>,
     ) -> Result<HttpResponse> {
         let client = self.clone();
-        tokio::task::spawn_blocking(move || client.request(method, &url, headers, body))
-            .await
-            .map_err(|e| NetworkError::HttpError(e.to_string()))?
+        foundation::async_runtime::spawn_blocking(move || {
+            client.request(method, &url, headers, body)
+        })
+        .await
+        .map_err(|e| NetworkError::HttpError(e.to_string()))?
     }
 
     pub fn get(&self, url: &str) -> RequestBuilder<'_> {
@@ -389,9 +389,9 @@ impl<'a> RequestBuilder<'a> {
         self
     }
 
-    pub fn json_body<T: serde::Serialize>(mut self, value: &T) -> Result<Self> {
-        self.request = self.request.json_body(value)?;
-        Ok(self)
+    pub fn json_body_str(mut self, json: &str) -> Self {
+        self.request = self.request.json_body_str(json);
+        self
     }
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
@@ -415,7 +415,7 @@ impl<'a> RequestBuilder<'a> {
     pub async fn send_async(&self) -> Result<HttpResponse> {
         let client = self.client.clone();
         let request = self.request.clone();
-        tokio::task::spawn_blocking(move || {
+        foundation::async_runtime::spawn_blocking(move || {
             let mut merged = client.default_headers.clone();
             merged.extend(request.headers.clone());
             validate_url(&request.url)?;
@@ -449,9 +449,9 @@ pub fn post(url: &str, body: &[u8]) -> Result<HttpResponse> {
     HttpRequest::post(url).body(body.to_vec()).send()
 }
 
-/// Blocking POST of a JSON-serializable value.
-pub fn post_json<T: serde::Serialize>(url: &str, value: &T) -> Result<HttpResponse> {
-    HttpRequest::post(url).json_body(value)?.send()
+/// Blocking POST of pre-rendered JSON text.
+pub fn post_json(url: &str, json: &str) -> Result<HttpResponse> {
+    HttpRequest::post(url).json_body_str(json).send()
 }
 
 /// Blocking PUT of raw bytes.
@@ -643,8 +643,8 @@ mod tests {
         assert!(resp.is_success());
         assert_eq!(resp.header("content-type"), Some("text/plain"));
         assert_eq!(resp.text().unwrap(), "{\"a\":1}");
-        let v: serde_json::Value = resp.json().unwrap();
-        assert_eq!(v["a"], 1);
+        let v = foundation::serialization::JsonValue::parse(&resp.text().unwrap()).unwrap();
+        assert_eq!(v.get("a").and_then(|x| x.as_i64()), Some(1));
     }
 
     #[test]

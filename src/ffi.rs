@@ -5,7 +5,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use serde_json::{json, Value};
+use foundation::serialization::JsonValue;
 
 fn set_error(error_out: *mut *mut c_char, message: &str) {
     if error_out.is_null() {
@@ -16,14 +16,19 @@ fn set_error(error_out: *mut *mut c_char, message: &str) {
     }
 }
 
-fn json_ptr(value: &Value) -> *mut c_char {
-    CString::new(value.to_string())
-        .unwrap_or_default()
-        .into_raw()
+fn json_ptr(json: &str) -> *mut c_char {
+    CString::new(json).unwrap_or_default().into_raw()
 }
 
-fn opt_str(value: &Option<String>) -> Value {
-    value.clone().map(Value::String).unwrap_or(Value::Null)
+fn opt_str(value: &Option<String>) -> JsonValue {
+    match value {
+        Some(text) => JsonValue::Str(text.clone()),
+        None => JsonValue::Null,
+    }
+}
+
+fn json_array(items: Vec<String>) -> String {
+    format!("[{}]", items.join(","))
 }
 
 /// The framework version as a static C string.
@@ -42,21 +47,28 @@ pub unsafe extern "C" fn tontoo_networkkit_scan_wifi(
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
     match crate::scan_wifi() {
-        Ok(networks) => json_ptr(&Value::Array(
-            networks
+        Ok(networks) => {
+            let items: Vec<String> = networks
                 .iter()
                 .map(|n| {
-                    json!({
-                        "ssid": n.ssid,
-                        "bssid": opt_str(&n.bssid),
-                        "signal_pct": n.signal_pct,
-                        "frequency_mhz": n.frequency_mhz,
-                        "security": n.security,
-                        "known": n.known,
-                    })
+                    JsonValue::Object(vec![
+                        ("ssid".to_string(), JsonValue::Str(n.ssid.clone())),
+                        ("bssid".to_string(), opt_str(&n.bssid)),
+                        ("signal_pct".to_string(), JsonValue::Integer(n.signal_pct as i64)),
+                        (
+                            "frequency_mhz".to_string(),
+                            n.frequency_mhz
+                                .map(|f| JsonValue::Integer(f as i64))
+                                .unwrap_or(JsonValue::Null),
+                        ),
+                        ("security".to_string(), JsonValue::Str(n.security.clone())),
+                        ("known".to_string(), JsonValue::Bool(n.known)),
+                    ])
+                    .stringify(false)
                 })
-                .collect(),
-        )),
+                .collect();
+            json_ptr(&json_array(items))
+        }
         Err(_) => {
             set_error(error_out, "wifi scan failed");
             std::ptr::null_mut()
@@ -75,16 +87,25 @@ pub unsafe extern "C" fn tontoo_networkkit_wifi_status(
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
     match crate::wifi_status() {
-        Ok(Some(status)) => json_ptr(&json!({
-            "interface": status.interface,
-            "ssid": opt_str(&status.ssid),
-            "bssid": opt_str(&status.bssid),
-            "signal_pct": status.signal_pct,
-            "frequency_mhz": status.frequency_mhz,
-            "security": status.security,
-            "state": status.state,
-            "ipv4": opt_str(&status.ipv4),
-        })),
+        Ok(Some(status)) => {
+            let value = JsonValue::Object(vec![
+                ("interface".to_string(), JsonValue::Str(status.interface.clone())),
+                ("ssid".to_string(), opt_str(&status.ssid)),
+                ("bssid".to_string(), opt_str(&status.bssid)),
+                ("signal_pct".to_string(), JsonValue::Integer(status.signal_pct as i64)),
+                (
+                    "frequency_mhz".to_string(),
+                    status
+                        .frequency_mhz
+                        .map(|f| JsonValue::Integer(f as i64))
+                        .unwrap_or(JsonValue::Null),
+                ),
+                ("security".to_string(), JsonValue::Str(status.security.clone())),
+                ("state".to_string(), JsonValue::Str(status.state.clone())),
+                ("ipv4".to_string(), opt_str(&status.ipv4)),
+            ]);
+            json_ptr(&value.stringify(false))
+        }
         Ok(None) => std::ptr::null_mut(),
         Err(_) => {
             set_error(error_out, "wifi status failed");
@@ -103,30 +124,40 @@ pub unsafe extern "C" fn tontoo_networkkit_local_interfaces(
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
     match crate::local_interfaces() {
-        Ok(interfaces) => json_ptr(&Value::Array(
-            interfaces
+        Ok(interfaces) => {
+            let items: Vec<String> = interfaces
                 .iter()
                 .map(|i| {
                     let addresses = |list: &[crate::localnet::Address]| {
-                        Value::Array(
+                        JsonValue::Array(
                             list.iter()
-                                .map(|a| json!({ "ip": a.ip.to_string(), "prefix_len": a.prefix_len }))
+                                .map(|a| {
+                                    JsonValue::Object(vec![
+                                        ("ip".to_string(), JsonValue::Str(a.ip.to_string())),
+                                        (
+                                            "prefix_len".to_string(),
+                                            JsonValue::Integer(a.prefix_len as i64),
+                                        ),
+                                    ])
+                                })
                                 .collect(),
                         )
                     };
-                    json!({
-                        "name": i.name,
-                        "index": i.index,
-                        "mac": opt_str(&i.mac),
-                        "state": i.state,
-                        "up": i.up,
-                        "wireless": i.wireless,
-                        "ipv4": addresses(&i.ipv4),
-                        "ipv6": addresses(&i.ipv6),
-                    })
+                    JsonValue::Object(vec![
+                        ("name".to_string(), JsonValue::Str(i.name.clone())),
+                        ("index".to_string(), JsonValue::Integer(i.index as i64)),
+                        ("mac".to_string(), opt_str(&i.mac)),
+                        ("state".to_string(), JsonValue::Str(i.state.clone())),
+                        ("up".to_string(), JsonValue::Bool(i.up)),
+                        ("wireless".to_string(), JsonValue::Bool(i.wireless)),
+                        ("ipv4".to_string(), addresses(&i.ipv4)),
+                        ("ipv6".to_string(), addresses(&i.ipv6)),
+                    ])
+                    .stringify(false)
                 })
-                .collect(),
-        )),
+                .collect();
+            json_ptr(&json_array(items))
+        }
         Err(_) => {
             set_error(error_out, "interface listing failed");
             std::ptr::null_mut()
@@ -144,19 +175,21 @@ pub unsafe extern "C" fn tontoo_networkkit_neighbors(
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
     match crate::neighbors() {
-        Ok(neighbors) => json_ptr(&Value::Array(
-            neighbors
+        Ok(neighbors) => {
+            let items: Vec<String> = neighbors
                 .iter()
                 .map(|n| {
-                    json!({
-                        "ip": n.ip.to_string(),
-                        "mac": opt_str(&n.mac),
-                        "device": n.device,
-                        "state": n.state,
-                    })
+                    JsonValue::Object(vec![
+                        ("ip".to_string(), JsonValue::Str(n.ip.to_string())),
+                        ("mac".to_string(), opt_str(&n.mac)),
+                        ("device".to_string(), JsonValue::Str(n.device.clone())),
+                        ("state".to_string(), JsonValue::Str(n.state.clone())),
+                    ])
+                    .stringify(false)
                 })
-                .collect(),
-        )),
+                .collect();
+            json_ptr(&json_array(items))
+        }
         Err(_) => {
             set_error(error_out, "neighbor discovery failed");
             std::ptr::null_mut()
@@ -176,12 +209,11 @@ pub unsafe extern "C" fn tontoo_networkkit_discover_bluetooth(
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
     match crate::discover_bluetooth(timeout_secs) {
-        Ok(devices) => json_ptr(&Value::Array(
-            devices
-                .iter()
-                .map(|d| device_json(d))
-                .collect(),
-        )),
+        Ok(devices) => {
+            let items: Vec<String> =
+                devices.iter().map(|d| device_json(d).stringify(false)).collect();
+            json_ptr(&json_array(items))
+        }
         Err(_) => {
             set_error(error_out, "bluetooth discovery failed");
             std::ptr::null_mut()
@@ -199,12 +231,11 @@ pub unsafe extern "C" fn tontoo_networkkit_paired_bluetooth_devices(
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
     match crate::paired_bluetooth_devices() {
-        Ok(devices) => json_ptr(&Value::Array(
-            devices
-                .iter()
-                .map(|d| device_json(d))
-                .collect(),
-        )),
+        Ok(devices) => {
+            let items: Vec<String> =
+                devices.iter().map(|d| device_json(d).stringify(false)).collect();
+            json_ptr(&json_array(items))
+        }
         Err(_) => {
             set_error(error_out, "bluetooth listing failed");
             std::ptr::null_mut()
@@ -212,22 +243,38 @@ pub unsafe extern "C" fn tontoo_networkkit_paired_bluetooth_devices(
     }
 }
 
-fn device_json(device: &crate::bluetooth::Device) -> Value {
-    json!({
-        "address": device.address,
-        "name": opt_str(&device.name),
-        "paired": device.paired,
-        "trusted": device.trusted,
-    })
+fn device_json(device: &crate::bluetooth::Device) -> JsonValue {
+    JsonValue::Object(vec![
+        ("address".to_string(), JsonValue::Str(device.address.clone())),
+        ("name".to_string(), opt_str(&device.name)),
+        ("paired".to_string(), JsonValue::Bool(device.paired)),
+        ("trusted".to_string(), JsonValue::Bool(device.trusted)),
+    ])
 }
 
-fn http_response_json(resp: &crate::http::HttpResponse) -> Value {
-    json!({
-        "status": resp.status,
-        "headers": resp.headers.iter().map(|(k, v)| json!({"name": k, "value": v})).collect::<Vec<_>>(),
-        "body": String::from_utf8_lossy(&resp.body).to_string(),
-        "url": resp.url,
-    })
+fn http_response_json(resp: &crate::http::HttpResponse) -> JsonValue {
+    JsonValue::Object(vec![
+        ("status".to_string(), JsonValue::Integer(resp.status as i64)),
+        (
+            "headers".to_string(),
+            JsonValue::Array(
+                resp.headers
+                    .iter()
+                    .map(|(k, v)| {
+                        JsonValue::Object(vec![
+                            ("name".to_string(), JsonValue::Str(k.clone())),
+                            ("value".to_string(), JsonValue::Str(v.clone())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "body".to_string(),
+            JsonValue::Str(String::from_utf8_lossy(&resp.body).to_string()),
+        ),
+        ("url".to_string(), JsonValue::Str(resp.url.clone())),
+    ])
 }
 
 fn c_str(ptr: *const c_char) -> Option<String> {
@@ -253,7 +300,7 @@ pub unsafe extern "C" fn tontoo_networkkit_http_get(
         return std::ptr::null_mut();
     };
     match crate::http_get(&url) {
-        Ok(resp) => json_ptr(&http_response_json(&resp)),
+        Ok(resp) => json_ptr(&http_response_json(&resp).stringify(false)),
         Err(e) => {
             set_error(error_out, &e.to_string());
             std::ptr::null_mut()
@@ -285,7 +332,7 @@ pub unsafe extern "C" fn tontoo_networkkit_http_post(
         unsafe { std::slice::from_raw_parts(body, body_len) }
     };
     match crate::http_post(&url, bytes) {
-        Ok(resp) => json_ptr(&http_response_json(&resp)),
+        Ok(resp) => json_ptr(&http_response_json(&resp).stringify(false)),
         Err(e) => {
             set_error(error_out, &e.to_string());
             std::ptr::null_mut()

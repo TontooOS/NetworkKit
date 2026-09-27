@@ -1,7 +1,7 @@
 pub mod mdns;
 
 use crate::types::{NetworkError, Result};
-use serde::Deserialize;
+use foundation::serialization::JsonValue;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -63,30 +63,6 @@ pub struct DiscoveredHost {
     pub source: DiscoverySource,
 }
 
-#[derive(Deserialize)]
-struct IpAddressJson {
-    #[serde(default)]
-    ifindex: u32,
-    #[serde(default)]
-    ifname: String,
-    #[serde(default)]
-    operstate: String,
-    #[serde(default)]
-    flags: Vec<String>,
-    #[serde(default)]
-    address: Option<String>,
-    #[serde(default)]
-    addr_info: Vec<AddrInfoJson>,
-}
-
-#[derive(Deserialize)]
-struct AddrInfoJson {
-    #[serde(default)]
-    local: String,
-    #[serde(default)]
-    prefixlen: u8,
-}
-
 /// Computes the directed broadcast address of an IPv4 subnet.
 ///
 /// Returns `None` when the prefix length exceeds 32.
@@ -122,28 +98,65 @@ fn is_wireless(name: &str) -> bool {
 /// Pure parsing without any filesystem access; [`LocalNetwork::interfaces`]
 /// enriches the result with sysfs state such as `wireless`.
 pub fn parse_ip_json(text: &str) -> Result<Vec<Interface>> {
-    let parsed: Vec<IpAddressJson> =
-        serde_json::from_str(text).map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    let parsed =
+        JsonValue::parse(text).map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    let entries = parsed
+        .as_array()
+        .ok_or_else(|| NetworkError::ParseError("expected array".to_string()))?;
 
-    Ok(parsed
-        .into_iter()
+    Ok(entries
+        .iter()
         .map(|entry| {
+            let str_field = |key: &str| {
+                entry.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+            };
+            let flags: Vec<String> = entry
+                .get("flags")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
             let mut interface = Interface {
-                name: entry.ifname.clone(),
-                index: entry.ifindex,
-                mac: entry.address.filter(|m| m.contains(':')),
-                state: entry.operstate.clone(),
-                up: entry.flags.iter().any(|f| f == "UP"),
+                name: str_field("ifname"),
+                index: entry
+                    .get("ifindex")
+                    .and_then(|v| v.as_u64())
+                    .filter(|v| *v <= u32::MAX as u64)
+                    .unwrap_or(0) as u32,
+                mac: entry
+                    .get("address")
+                    .and_then(|v| v.as_str())
+                    .filter(|m| m.contains(':'))
+                    .map(str::to_string),
+                state: str_field("operstate"),
+                up: flags.iter().any(|f| f == "UP"),
                 ..Interface::default()
             };
 
-            for info in entry.addr_info {
-                let Some(ip) = info.local.parse::<IpAddr>().ok() else {
+            let addr_infos: Vec<&JsonValue> = entry
+                .get("addr_info")
+                .and_then(|v| v.as_array())
+                .map(|items| items.iter().collect())
+                .unwrap_or_default();
+            for info in addr_infos {
+                let Some(ip) = info
+                    .get("local")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<IpAddr>().ok())
+                else {
                     continue;
                 };
                 let address = Address {
                     ip,
-                    prefix_len: info.prefixlen,
+                    prefix_len: info
+                        .get("prefixlen")
+                        .and_then(|v| v.as_u64())
+                        .filter(|v| *v <= u8::MAX as u64)
+                        .unwrap_or(0) as u8,
                 };
                 match address.ip {
                     IpAddr::V4(_) => interface.ipv4.push(address),
@@ -374,7 +387,7 @@ impl LocalNetwork {
 
     pub async fn interfaces_async(&self) -> Result<Vec<Interface>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.interfaces())
+        foundation::async_runtime::spawn_blocking(move || this.interfaces())
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }
@@ -386,9 +399,11 @@ impl LocalNetwork {
         timeout: Duration,
     ) -> Result<Vec<DiscoveryReply>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.broadcast_discovery(port, &payload, timeout))
-            .await
-            .map_err(|e| NetworkError::IoError(e.to_string()))?
+        foundation::async_runtime::spawn_blocking(move || {
+            this.broadcast_discovery(port, &payload, timeout)
+        })
+        .await
+        .map_err(|e| NetworkError::IoError(e.to_string()))?
     }
 
     pub async fn mdns_query_async(
@@ -398,7 +413,7 @@ impl LocalNetwork {
     ) -> Result<Vec<DiscoveredHost>> {
         let this = self.clone();
         let service = service.to_string();
-        tokio::task::spawn_blocking(move || this.mdns_query(&service, timeout))
+        foundation::async_runtime::spawn_blocking(move || this.mdns_query(&service, timeout))
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }

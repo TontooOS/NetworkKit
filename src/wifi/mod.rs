@@ -1,10 +1,10 @@
 use crate::types::{NetworkError, Result};
 use crate::util::{rfkill_blocked, run, tool_available};
-use serde::{Deserialize, Serialize};
+use foundation::serialization::{JsonDocument, JsonObject};
 
 pub const NMCLI: &str = "nmcli";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct WifiNetwork {
     pub ssid: String,
     pub bssid: Option<String>,
@@ -13,8 +13,35 @@ pub struct WifiNetwork {
     pub security: String,
     /// True when the SSID is stored as a known network (set by the
     /// settings daemon; always false for direct local scans).
-    #[serde(default)]
     pub known: bool,
+}
+
+impl WifiNetwork {
+    fn from_document(doc: &JsonDocument) -> std::result::Result<Self, String> {
+        Ok(Self {
+            ssid: doc
+                .str_field("ssid")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default(),
+            bssid: doc.str_field("bssid").map_err(|e| e.to_string())?,
+            signal_pct: doc
+                .i64_field("signal_pct")
+                .map_err(|e| e.to_string())?
+                .unwrap_or(0) as i32,
+            frequency_mhz: doc
+                .u64_field("frequency_mhz")
+                .map_err(|e| e.to_string())?
+                .map(|v| v as u32),
+            security: doc
+                .str_field("security")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default(),
+            known: doc
+                .bool_field("known")
+                .map_err(|e| e.to_string())?
+                .unwrap_or(false),
+        })
+    }
 }
 
 impl WifiNetwork {
@@ -23,7 +50,7 @@ impl WifiNetwork {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct WifiStatus {
     pub interface: String,
     pub ssid: Option<String>,
@@ -33,6 +60,36 @@ pub struct WifiStatus {
     pub security: String,
     pub state: String,
     pub ipv4: Option<String>,
+}
+
+impl WifiStatus {
+    fn from_document(doc: &JsonDocument) -> std::result::Result<Self, String> {
+        Ok(Self {
+            interface: doc
+                .str_field("interface")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default(),
+            ssid: doc.str_field("ssid").map_err(|e| e.to_string())?,
+            bssid: doc.str_field("bssid").map_err(|e| e.to_string())?,
+            signal_pct: doc
+                .i64_field("signal_pct")
+                .map_err(|e| e.to_string())?
+                .unwrap_or(0) as i32,
+            frequency_mhz: doc
+                .u64_field("frequency_mhz")
+                .map_err(|e| e.to_string())?
+                .map(|v| v as u32),
+            security: doc
+                .str_field("security")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default(),
+            state: doc
+                .str_field("state")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default(),
+            ipv4: doc.str_field("ipv4").map_err(|e| e.to_string())?,
+        })
+    }
 }
 
 /// Splits one `nmcli -t` terse line into unescaped fields.
@@ -196,11 +253,14 @@ impl Wifi {
     }
 
     fn scan_via_daemon(&self) -> Result<Vec<WifiNetwork>> {
-        let result = crate::daemon::call("wifi_list", serde_json::json!({}))?;
-        let networks: Vec<WifiNetwork> = serde_json::from_value(
-            result.get("networks").cloned().unwrap_or(serde_json::Value::Null),
-        )
-        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+        let result = crate::daemon::call("wifi_list", &JsonObject::new())?;
+        let mut networks = Vec::new();
+        for item in result.array_field("networks").unwrap_or_default() {
+            networks.push(
+                WifiNetwork::from_document(&item)
+                    .map_err(NetworkError::ParseError)?,
+            );
+        }
         Ok(networks)
     }
 
@@ -242,12 +302,16 @@ impl Wifi {
     }
 
     fn status_via_daemon(&self) -> Result<Option<WifiStatus>> {
-        let result = crate::daemon::call("wifi_status", serde_json::json!({}))?;
-        let status: Option<WifiStatus> = serde_json::from_value(
-            result.get("status").cloned().unwrap_or(serde_json::Value::Null),
-        )
-        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
-        Ok(status)
+        let result = crate::daemon::call("wifi_status", &JsonObject::new())?;
+        let status = result
+            .nested("status")
+            .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+        match status {
+            None => Ok(None),
+            Some(doc) => WifiStatus::from_document(&doc)
+                .map(Some)
+                .map_err(NetworkError::ParseError),
+        }
     }
 
     /// Direct local status read via nmcli. Used as a fallback when the
@@ -329,14 +393,14 @@ impl Wifi {
 
     pub async fn scan_async(&self, rescan: bool) -> Result<Vec<WifiNetwork>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.scan(rescan))
+        foundation::async_runtime::spawn_blocking(move || this.scan(rescan))
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }
 
     pub async fn status_async(&self) -> Result<Option<WifiStatus>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.status())
+        foundation::async_runtime::spawn_blocking(move || this.status())
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }

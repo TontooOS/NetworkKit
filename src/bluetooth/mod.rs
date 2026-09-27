@@ -421,14 +421,14 @@ impl Bluetooth {
 
     pub async fn adapter_async(&self) -> Result<Adapter> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.adapter())
+        foundation::async_runtime::spawn_blocking(move || this.adapter())
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }
 
     pub async fn discover_async(&self, timeout_secs: u64) -> Result<Vec<Device>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.discover(timeout_secs))
+        foundation::async_runtime::spawn_blocking(move || this.discover(timeout_secs))
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }
@@ -436,7 +436,7 @@ impl Bluetooth {
     pub async fn connect_async(&self, address: &str, timeout_secs: u64) -> Result<Device> {
         let this = self.clone();
         let address = address.to_string();
-        tokio::task::spawn_blocking(move || this.connect(&address, timeout_secs))
+        foundation::async_runtime::spawn_blocking(move || this.connect(&address, timeout_secs))
             .await
             .map_err(|e| NetworkError::IoError(e.to_string()))?
     }

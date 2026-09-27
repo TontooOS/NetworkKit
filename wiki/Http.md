@@ -3,7 +3,9 @@
 The `http` module is the single blocking HTTP/HTTPS client for TontooOS. It
 replaces per-app `ureq` / `reqwest` stacks with one sync-first API on top of
 `ureq` with `rustls` (no OpenSSL dependency). All calls block the current
-thread; async wrappers run the same code on `tokio::task::spawn_blocking`.
+thread; async wrappers run the same code on
+`foundation::async_runtime::spawn_blocking`. JSON goes through Foundation
+(`JsonValue`); there is no serde dependency.
 
 ## HttpMethod
 
@@ -76,17 +78,14 @@ pub fn text(&self) -> Result<String>
 - Decodes the body as UTF-8.
 - Returns `Err(NetworkError::ParseError)` on invalid UTF-8.
 
-### HttpResponse::json
+### JSON bodies
+
+Parse response text with Foundation's `JsonValue::parse`; send pre-rendered
+JSON with `json_body_str` / `post_json`:
 
 ```rust
-pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T>
-```
-
-- Parses the body as JSON into `T`.
-- Returns `Err(NetworkError::ParseError)` on invalid JSON.
-
-```rust
-let value: serde_json::Value = resp.json().unwrap();
+let value = foundation::serialization::JsonValue::parse(&resp.text()?).unwrap();
+let resp = client.post("https://example.com").json_body_str(r#"{"a":1}"#).send()?;
 ```
 
 ## HttpRequest
@@ -114,15 +113,14 @@ pub fn header(self, name: &str, value: &str) -> Self
 pub fn headers(self, headers: Vec<(String, String)>) -> Self
 pub fn body(self, body: Vec<u8>) -> Self
 pub fn body_str(self, body: &str) -> Self
-pub fn json_body<T: serde::Serialize>(self, value: &T) -> Result<Self>
+pub fn json_body_str(self, json: &str) -> Self
 pub fn timeout(self, timeout: Duration) -> Self
 pub fn user_agent(self, agent: &str) -> Self
 pub fn max_redirects(self, max: u32) -> Self
 ```
 
-- `json_body` serializes to JSON and sets
+- `json_body_str` sends pre-rendered JSON and sets
   `Content-Type: application/json; charset=utf-8` when absent.
-- Returns `Err(NetworkError::ParseError)` when serialization fails.
 
 ### HttpRequest::send
 
@@ -146,7 +144,7 @@ let resp = HttpRequest::get("https://example.com").send().unwrap();
 pub async fn send_async(&self) -> Result<HttpResponse>
 ```
 
-- Same as `send`, executed on `tokio::task::spawn_blocking`.
+- Same as `send`, executed on `foundation::async_runtime::spawn_blocking`.
 - Must be called inside a Tokio runtime.
 - Returns `Err(NetworkError::HttpError)` when the blocking task fails to join.
 
@@ -222,7 +220,7 @@ let resp = client.get("https://example.com").header("Accept", "text/html").send(
 pub fn get(url: &str) -> Result<HttpResponse>
 pub fn get_with_headers(url: &str, headers: Vec<(String, String)>) -> Result<HttpResponse>
 pub fn post(url: &str, body: &[u8]) -> Result<HttpResponse>
-pub fn post_json<T: serde::Serialize>(url: &str, value: &T) -> Result<HttpResponse>
+pub fn post_json(url: &str, json: &str) -> Result<HttpResponse>
 pub fn put(url: &str, body: &[u8]) -> Result<HttpResponse>
 pub fn delete(url: &str) -> Result<HttpResponse>
 pub async fn get_async(url: String) -> Result<HttpResponse>
@@ -271,7 +269,7 @@ tontoo_networkkit_string_free(err);
 | `NetworkError::InvalidUrl(url)` | URL without `http://` or `https://` prefix |
 | `NetworkError::Timeout` | Global timeout elapsed (mapped from `ureq::Error::Timeout`) |
 | `NetworkError::HttpError(msg)` | Transport, TLS, redirect or join failure |
-| `NetworkError::ParseError(msg)` | `text()` on invalid UTF-8 or `json()` on invalid JSON |
+| `NetworkError::ParseError(msg)` | `text()` on invalid UTF-8 |
 
 ## Usage / Example
 
@@ -285,10 +283,11 @@ let text = HttpRequest::get("https://example.com")
     .text()?;
 
 let client = HttpClient::with_user_agent("MyApp/1.0").header("Accept", "application/json");
-let value: serde_json::Value = client
+let text = client
     .get("https://httpbin.org/get")
     .send()?
-    .json()?;
+    .text()?;
+let value = foundation::serialization::JsonValue::parse(&text)?;
 ```
 
 See `examples/test_http.rs` for a runnable demo.

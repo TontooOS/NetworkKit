@@ -27,11 +27,8 @@ path = "examples/test_local_network.rs"
 name = "test_http"
 path = "examples/test_http.rs"
 
+# ureq keeps rustls (TLS); the "json" feature is dropped, JSON goes
+# through Foundation. Async wrappers use foundation::async_runtime.
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
-ureq = { version = "3", features = ["rustls", "json"] }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+foundation = { path = "../Foundation" }
+ureq = { version = "3", features = ["rustls"] }

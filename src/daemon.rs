@@ -7,6 +7,7 @@
 //! client here: only the Settings app may use them.
 
 use crate::types::{NetworkError, Result};
+use foundation::serialization::{JsonDocument, JsonObject};
 use std::path::PathBuf;
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/tontoo-settings.sock";
@@ -28,7 +29,7 @@ pub fn daemon_available() -> bool {
 /// Errors: socket missing/unreachable map to `NotAvailable`, a daemon
 /// error frame maps to `CommandFailed`, malformed frames to `ParseError`.
 #[cfg(unix)]
-pub fn call(op: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+pub fn call(op: &str, params: &JsonObject) -> Result<JsonDocument> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
@@ -41,7 +42,20 @@ pub fn call(op: &str, params: serde_json::Value) -> Result<serde_json::Value> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(15)));
 
-    let mut line = serde_json::json!({"id": 1, "op": op, "params": params}).to_string();
+    let params_json = params
+        .build(false)
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    let mut frame = JsonObject::new();
+    frame
+        .field_f64("id", 1.0)
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    frame.field_str("op", op);
+    frame
+        .field_raw("params", &params_json)
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    let mut line = frame
+        .build(false)
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?;
     line.push('\n');
     stream
         .write_all(line.as_bytes())
@@ -53,27 +67,30 @@ pub fn call(op: &str, params: serde_json::Value) -> Result<serde_json::Value> {
     reader
         .read_line(&mut reply)
         .map_err(NetworkError::from_io)?;
-    let frame: serde_json::Value =
-        serde_json::from_str(&reply).map_err(|e| NetworkError::ParseError(e.to_string()))?;
-    if frame.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+    let frame =
+        JsonDocument::parse(&reply).map_err(|e| NetworkError::ParseError(e.to_string()))?;
+    let ok = frame
+        .bool_field("ok")
+        .map_err(|e| NetworkError::ParseError(e.to_string()))?
+        .unwrap_or(false);
+    if ok {
         Ok(frame
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null))
+            .nested("result")
+            .map_err(|e| NetworkError::ParseError(e.to_string()))?
+            .unwrap_or_else(JsonDocument::empty))
     } else {
         Err(NetworkError::CommandFailed(
             frame
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("daemon error")
-                .to_string(),
+                .str_field("error")
+                .map_err(|e| NetworkError::ParseError(e.to_string()))?
+                .unwrap_or_else(|| "daemon error".to_string()),
         ))
     }
 }
 
 /// Non-Unix stub: the daemon protocol is Linux-only.
 #[cfg(not(unix))]
-pub fn call(_op: &str, _params: serde_json::Value) -> Result<serde_json::Value> {
+pub fn call(_op: &str, _params: &JsonObject) -> Result<JsonDocument> {
     Err(NetworkError::NotAvailable)
 }
 
@@ -92,7 +109,7 @@ mod tests {
             "SETTINGS_SOCKET",
             "/nonexistent-tontoo-settings-test.sock",
         );
-        let err = call("wifi_list", serde_json::json!({})).unwrap_err();
+        let err = call("wifi_list", &JsonObject::new()).unwrap_err();
         assert!(matches!(err, NetworkError::NotAvailable));
         std::env::remove_var("SETTINGS_SOCKET");
     }
