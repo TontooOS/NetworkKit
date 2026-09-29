@@ -6,7 +6,7 @@ iproute2, raw UDP/mDNS sockets) without any cloud dependency.
 
 - Repository: https://github.com/TontooOS/Libs
 - License: TCL
-- Version: 26.1.0
+- Version: 27.0.0
 
 ## Feature Index
 
